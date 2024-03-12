@@ -300,10 +300,7 @@ void redirect(int argc, char** argv){
 
 void runExtCmd(int argc, char** argv) {
   int ret;
-  // int worked = -1;
   char *cmd_path;
-  // Allocate a buffer to store the concatenated path
-  // Copy the constant part of the path
 
   // we check all path and concatStr(path[i],argv[0])
   for (int i = 0; shellPath[i] != NULL ; i++) {
@@ -339,6 +336,8 @@ int splitLine(char *line, char** argv ){
     while ((token = strsep(&line, separator)) != NULL && (argc + 1 < MAXARGS)) {
       // printf("token: %s", token);
       // Variable whitespace & Empty Commands
+
+      //
       if ((strchr(token, '>')) != NULL && (token[0] != '>')) {
         // found > within the token. Now break it up into parts
         subtoken = strsep(&token, ">");
