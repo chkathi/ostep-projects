@@ -416,6 +416,8 @@ void wExit(int argc, char** argv) {
     errorMessage();
   }
 
+  // Hello World
+
   exit(0);
 }
 
