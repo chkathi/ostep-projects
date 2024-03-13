@@ -25,6 +25,7 @@ int onlyBuiltIn = 0;
 void batchMode(FILE* fileName);
 char* builtinCommand(char *command);
 int checkAmpersand(int argc, char** argv);
+int checkPath(char* currentPath);
 char* concatStr(char *str1, char *str2);
 void emptyArr(char** arr);
 void errorMessage();
@@ -40,7 +41,7 @@ int splitLine(char* line, char** argv);
 void wCat(int argc, char** argv);
 void wCd(int argc, char** argv);
 void wExit(int argc, char** argv);
-void wPath();
+void wPath(int argc, char** argv);
 
 int main(int argc, char* argv[]) {
   FILE* file = stdin; 
@@ -83,9 +84,10 @@ void batchMode(FILE* file) {
   while ((nread = getline(&line, &len, file)) != -1) {
     // printf("%s\n", line);
     argc = splitLine(line, argv);
+    // printArgv(argc, argv);
 
     if (argc == -1)
-      errorMessage();
+      continue;
 
     if (strcmp(argv[0], "exit") == 0) {
       free(line);
@@ -101,6 +103,8 @@ void batchMode(FILE* file) {
     } else {
       // Check for parallel and if parallel == 0 then empty parallel 
       // skip processExtCmd and redirect 
+      if (argc == 0) continue; 
+
       parallel = checkAmpersand(argc, argv);
       
       if (parallel == 1)
@@ -140,6 +144,14 @@ int checkAmpersand(int argc, char** argv) {
   }
 
   return isAmp;
+}
+
+int checkPath(char* enteredPath) {
+  for (int i = 0; i < pathLocation; i++) {
+    if (strcmp(shellPath[i], enteredPath) == 0) return i;
+  }
+
+  return -1; 
 }
 
 char* concatStr(char* str1, char* str2) {
@@ -207,6 +219,7 @@ void parallelCommands(int argc, char** argv) {
 }
 
 void printArgv(int argc, char** argv) {
+  printf("\nArgc: %d\n", argc);
   for (int i = 0; i < argc; i++) {
     printf("%s, ", argv[i]);
   }
@@ -256,8 +269,6 @@ void redirect(int argc, char** argv){
   int out = 0;  // track position of location Out redirection, >
   int fd;
 
-  // redirect with no spaces has to work as well
-
   for (i = 0; i < argc; i++) {
     if (strcmp(argv[i], ">") == 0) {
       if (out != 0) {
@@ -268,7 +279,7 @@ void redirect(int argc, char** argv){
         errorMessage();
       } 
 
-      // User entered ls file1>file2
+      // User entered ls file1 > file2
       // set out to the current loop_counter
       out = i;     
     } 
@@ -276,7 +287,7 @@ void redirect(int argc, char** argv){
 
   if (out != 0) {
     if (argv[out + 1] == NULL || argv[out + 2] != NULL){
-      // User entered "ls > NULL"
+      // User entered "ls > NULL" or ls > file file
       errorMessage();
     }
         
@@ -287,8 +298,6 @@ void redirect(int argc, char** argv){
     if (fd == -1) {
       errorMessage();
     }
-
-
 
     // // Switch standard-out to the value of file descriptor 
     // dup2(fd, STDOUT_FILENO);
@@ -334,10 +343,13 @@ int splitLine(char *line, char** argv ){
     char *subtoken;
     
     while ((token = strsep(&line, separator)) != NULL && (argc + 1 < MAXARGS)) {
-      // printf("token: %s", token);
       // Variable whitespace & Empty Commands
+      if((*token == '\0') || (*token == '\n') || (*token == '\t')) {
+        continue;
+      }
+      
+      // printf("token: %s\n", token);
 
-      //
       if ((strchr(token, '>')) != NULL && (token[0] != '>')) {
         // found > within the token. Now break it up into parts
         subtoken = strsep(&token, ">");
@@ -355,9 +367,10 @@ int splitLine(char *line, char** argv ){
         argv[argc++] = token;
       }
     }
-    argv[argc - 1] = NULL;
-    argc--;
 
+    if (argc > 0)
+      argv[argc] = NULL;
+    
     // printArgv(argc, argv);
 
     return argc;
@@ -367,17 +380,13 @@ void wCat(int argc, char** argv) {
   char line[512];
 
   // just ./wcat entered then return 0
-  if (argc == 1) {
-
-  }
+  if (argc == 1) {}
 
   for (int i = 1; i < argc; i++) {
     // output if not found (wcat: cannot open file)
     in = fopen(argv[i],"r");
 
-    if (in == NULL) {
-
-    }
+    if (in == NULL) {}
 
     while (fgets(line, sizeof(line), in) != NULL) {
       printf("%s", line);
@@ -421,6 +430,7 @@ void wExit(int argc, char** argv) {
 }
 
 void wPath(int argc, char** argv) {
+  // int isPath = 0;
   if (argc == 1) {
     onlyBuiltIn = -1;
     return;
@@ -428,6 +438,10 @@ void wPath(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
       if (argv[i] != NULL) {
         char *currentPath = (char *)malloc(200*sizeof(char));
+        // isPath = checkPath(argv[i]);
+
+        // if (isPath > 0) return; 
+
         getcwd(currentPath,200);
         strcat(currentPath, "/");
         strcat(currentPath, argv[i]);
@@ -445,6 +459,5 @@ void wPath(int argc, char** argv) {
   // printPaths();
 }
 
-// tests 15 variable whitespace is not being checked and removed
-// tests 21 empty commands not working
 // tests 22 checks if everything works serially
+// Problem?
