@@ -33,7 +33,6 @@ void parallelCommands(int argc, char** argv);
 void parallelExtCmd(char* allCommands[][MAXARGS], int* commandLength, int commandNums);
 void printArgv(int argc, char **argv);
 void printPaths();
-void processExtCmd(int argc, char **argv);
 void redirect(int argc, char*argv[]);
 void runExtCmd(int argc, char** argv);
 int splitLine(char* line, char** argv);
@@ -207,17 +206,15 @@ void interactiveLoop() {
             if (argc > 1)
                 onlyBuiltIn = 0;
         } else {
-            if (argc == 0)
-                continue;
 
-            parallel = checkAmpersand(argc, argv);
+          if (argc == 0) continue; 
 
-            if (parallel == 1) {
-                parallelCommands(argc, argv);
-            } else if (parallel == 0) {
-                redirect(argc, argv);
-                processExtCmd(argc, argv);
-            }
+          parallel = checkAmpersand(argc, argv);
+    
+          if (parallel == -1) // single ampersand
+            continue;
+          else  // every command goes through parallelCommnads
+            parallelCommands(argc, argv);
         }
     }
 
@@ -313,33 +310,6 @@ void printPaths() {
 
   printf("\n");
 }
-
-void processExtCmd(int argc, char **argv){
-  int status;
-  pid_t pid;
-
-  pid = fork();
-
-  switch(pid){
-    case -1:
-      errorMessage();
-    case 0:
-      /* I am child process.
-       I will execute the command, call: execvp */
-      runExtCmd(argc, argv);
-      break;
-
-    default:
-      /* I am parent process */
-      if (wait(&status) == -1){
-        errorMessage();
-      }
-
-      break;
-    }  /* end of the switch */
-
-  return;
-}   
 
 void redirect(int argc, char** argv){
   int i;	     // loop counter

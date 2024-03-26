@@ -29,6 +29,8 @@ void changeDirectory(char *path); // Function to change the current directory
 int wishPath(char **args); // Function to handle the 'path' command
 int wishcd(char **args); // Function to handle the 'cd' command
 int wishLaunch(char **args); // Function to launch external commands
+void wishcat (int argc, char** argv); // taking cat from wcat assignment 
+
 char *concatPath(const char *path1, const char *path2); // Function to concatenate paths
 void para2(char **args);
 void parallelCommandExecute(char *line);
@@ -41,6 +43,7 @@ char error_message[ERROR_MESSAGE_LENGTH] = "An error has occurred\n"; // Error m
 char *path[MAX_PATHS] = {"/usr/bin", "/bin"}; // initial paths available
 int pathNull = 0; // Flag to indicate if path is empty
 int paths = 2; // Initial number of paths
+int numArgs=0;
 
 // main functions 
 int main(int argc, char *argv[]) {
@@ -90,7 +93,6 @@ void batchloop(FILE *file) {
     char *line = NULL;
     size_t len = 0;
     ssize_t nread;
-
     nread = getline(&line, &len, file);
 
     if (nread != -1)
@@ -104,7 +106,6 @@ void batchloop(FILE *file) {
 
             wishExecute(tokenize(line, " \t\n"));
 
-
             nread = getline(&line, &len, file);
         } while (nread!= -1);
     }
@@ -115,34 +116,28 @@ void batchloop(FILE *file) {
 
 void para2(char **args) {
     pid_t pid;
-    int paraCount = 0;
 
-    // Count the number of parallel commands
-    for (int i = 0; args[i] != NULL; i++) {
-        if (*args[i] == '&') {
-            paraCount++;
-        }
-    }
+    if (*args[0] == '&' && numArgs == 1 ) return;
 
     // Initialize index to iterate over args array
     int index = 0;
 
     // Execute each parallel command
-    while (index < paraCount) {
+    while (index < numArgs) {
         // Execute the command starting from the current index
-        pid = wishExecute(args + index);
+        pid = wishLaunch(args + index);
         if (pid > 0) {
             // Skip to the next command by finding the next '&' symbol
-            while (args[index] != NULL && *args[index] != '&') {
+            while (args[index] != NULL) {
                 index++;
             }
-            if (args[index] != NULL) {
-                index++; // Move past the '&' symbol
-            }
+            index++; // Move past the '&' symbol
+            if(index < numArgs)
+                continue;
+                
         }
     }
 }
-
 
 
 void parallelCommandExecute(char *line) {
@@ -233,8 +228,8 @@ int wishExecute(char **args) {
     for (int i = 0; args[i] != NULL; i++) {
         if (strcmp(args[i], "&") == 0) {
             //parallelCommandExecute(args[i - 1]); // Call parallelCommandExecute
-        para2(args);
-            return 0;
+          para2(args);
+          return 0;
         }
     }
 
@@ -318,6 +313,7 @@ char **tokenize(char *line, char *delim) { // passes tests 11 by splitting the s
     }
     // this will end the array with a null
     tokens[index] = NULL;
+    numArgs= index;
     return tokens;
 }
 
@@ -348,6 +344,28 @@ int wishPath(char **args) {
     return 0;
 }
 
+void wishcat(int argc, char** argv) {
+    FILE* in = stdin;
+	
+	for (int i = 1; i < argc; i++) { // argc is the # of loops you want it to go through, and i = 1 is where you want to start which is going to be test.txt in this assignment. 
+		in = fopen(argv[i], "r");
+		
+		if (in == NULL) {// to check if the file opened correctly, if not then we would get NULL (nothing) == means qual
+			printf("wcat: cannot open file\n");
+			
+			exit (1);
+		}
+		char myString[512];
+		while (fgets(myString, 512, in) != NULL) { //!= means not equal 
+			// Print the file content
+			printf("%s", myString);
+		}
+			
+	}
+	 
+	fclose(in);
+ 
+}
 int wishLaunch(char **args) {
     int i = 0;
     pid_t pid;
@@ -460,10 +478,7 @@ int validateArgs(char **args) {
                 }
                 redirectCount++;
                 break;
-            case '|':
-                // Increment pipe count if '|' found
-
-                break;
+          
         }
     }
 
