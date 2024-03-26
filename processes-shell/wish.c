@@ -109,14 +109,11 @@ void batchMode(FILE* file) {
       if (argc == 0) continue; 
 
       parallel = checkAmpersand(argc, argv);
-      
-      if (parallel == 1) {
+  
+      if (parallel == -1) 
+        continue;
+      else 
         parallelCommands(argc, argv);
-      }
-      else if (parallel == 0) {
-        redirect(argc, argv);
-        processExtCmd(argc, argv);
-      }
     }
 
     free(line);
@@ -243,20 +240,38 @@ void interactiveLoop() {
     free(line);
 }
 
+// New func from KF
+int newParallelProcessExtCmd(int argc, char **argv){
+  pid_t pid;
+
+  pid = fork();
+
+  switch(pid){
+    case -1:
+      errorMessage();
+    case 0:
+      /* I am child process.
+       I will execute the command, call: execvp */
+
+       
+       // redirect has to happen in child, not in parent
+      redirect(argc, argv);
+      runExtCmd(argc, argv);
+      break;
+    }
+    
+
+  return pid;
+}
+
 void parallelExtCmd(char* allCommands[][MAXARGS], int* commandLength, int commandNums) {
     pid_t childPids[commandNums];
-    for (int i = 0; i < commandNums; i++) {
-        pid_t pid = fork();
-        childPids[i] = pid;
+    pid_t pid;
 
-        if (pid < -1) {
-            errorMessage();
-        } else if (pid == 0) {
-            // Child process
-            redirect(commandLength[i], allCommands[i]);
-            runExtCmd(commandLength[i], allCommands[i]);
-            exit(0);
-        } 
+    for (int i = 0; i < commandNums; i++) {
+        // have to get child's pid for waiting stuff KF
+        pid = newParallelProcessExtCmd(commandLength[i], allCommands[i]);
+        childPids[i] = pid;
     }
 
     // Wait for all child processes to finish
@@ -265,10 +280,7 @@ void parallelExtCmd(char* allCommands[][MAXARGS], int* commandLength, int comman
             waitpid(childPids[i], NULL, 0);
         }
     }
-
-    return; 
 }
-
 
 void parallelCommands(int argc, char** argv) {
     char* allCommands[MAXARGS][MAXARGS]; // Array to hold all commands and their arguments
@@ -280,18 +292,19 @@ void parallelCommands(int argc, char** argv) {
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "&") == 0) {
             command[commandArgs] = NULL;
+            allCommands[totalCommands][0] = NULL; // Ensure the next command starts with NULL terminator
             memcpy(allCommands[totalCommands], command, (commandArgs + 1) * sizeof(char*));
             commandLength[totalCommands] = commandArgs;
             totalCommands++;
             commandArgs = 0;
             continue;
         }
-
         command[commandArgs++] = argv[i];
     }
 
     if (commandArgs > 0) {
         command[commandArgs] = NULL;
+        allCommands[totalCommands][0] = NULL; // Ensure the last command starts with NULL terminator
         memcpy(allCommands[totalCommands], command, (commandArgs + 1) * sizeof(char*));
         commandLength[totalCommands] = commandArgs;
         totalCommands++;
@@ -382,9 +395,8 @@ void redirect(int argc, char** argv){
     }
 
     // // // Switch standard-out to the value of file descriptor 
-    // dup2(fd, STDOUT_FILENO);
-
-    // close(fd);
+    dup2(fd, STDOUT_FILENO);
+    close(fd);
         
     argv[out] = NULL;
   }    

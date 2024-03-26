@@ -1,476 +1,516 @@
-#include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h> // For system calls like execv and chdir
-#include <string.h> // For string manipulation functions
-#include <errno.h> // For error handling
-#include <fcntl.h> // For file control options
-#include <sys/stat.h> 
+#include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 
-// define section 
+/* Define Section */
+#define MAXLINE 80
+#define MAXARGS 20
+#define MAX_PATH_LENGTH 50
+#define TRUE 1
+#define DELIM " \t\n"
 #define _GNU_SOURCE
-#define ERROR_MESSAGE_LENGTH 30 // Maximum length of an error message
-#define MAX_TOKENS 64 // Maximum number of tokens in a command
-#define MAX_PATHS 100 // Maximum number of paths in the path variable
 
-// Define processIDs and processCount to keep track of processes
-pid_t processIDs[MAX_PATHS]; // An array to store process IDs
-int processCount = 0; // A counter to keep track of the number of processes
+char error_message[30] = "An error has occurred\n";
+char* shellPath[MAX_PATH_LENGTH] = {"/bin", "/usr/bin"};
+int pathLocation = 2;
+int onlyBuiltIn = 0;
 
-// Declare getPath function if not defined elsewhere
-char *getPath(char *arg);
-void userloop(); // Function to handle interactive mode
-void batchloop(FILE *file); // Function to handle batch mode
-int wishexit(char **args); // Function to handle the 'exit' command
-int wishExecute(char **args); // Function to execute commands
-int wishnumbuiltins(); // Function to get the number of built-in commands
-char **tokenize(char *line, char *delim); // Function to tokenize a string
-void changeDirectory(char *path); // Function to change the current directory
-int wishPath(char **args); // Function to handle the 'path' command
-int wishcd(char **args); // Function to handle the 'cd' command
-int wishLaunch(char **args); // Function to launch external commands
-char *concatPath(const char *path1, const char *path2); // Function to concatenate paths
-void parallelCommandExecute(char **args);
-int validateArgs(char **args); // Function to validate command arguments
-char *getPath(char *arg);
-void launchPipe(char **args);
+// Batch mode require file input
+void batchMode(FILE* fileName);
+char* builtinCommand(char *command);
+int checkAmpersand(int argc, char** argv);
+int checkPath(char* currentPath);
+char* concatStr(char *str1, char *str2);
+void emptyArr(char** arr);
+void errorMessage();
+void interactiveLoop();
+int newParallelProcessExtCmd(int argc, char **argv);
+void parallelCommands(int argc, char** argv);
+void parallelExtCmd(char* allCommands[][MAXARGS], int* commandLength, int commandNums);
+void printArgv(int argc, char **argv);
+void printPaths();
+void processExtCmd(int argc, char **argv);
+void redirect(int argc, char*argv[]);
+void runExtCmd(int argc, char** argv);
+int splitLine(char* line, char** argv);
 
-// Global variables
-char *builtinstr[] = {"cd", "exit", "path"}; // Array of built-in commands
-int (*builtinfunc[])(char **) = {&wishcd, &wishexit, &wishPath}; // Array of functions corresponding to built-in commands
-char error_message[ERROR_MESSAGE_LENGTH] = "An error has occurred\n"; // Error message template
-char *path[MAX_PATHS] = {"/usr/bin", "/bin"}; // initial paths available
-int pathNull = 0; // Flag to indicate if path is empty
-int paths = 2; // Initial number of paths
 
-// main functions 
-int main(int argc, char *argv[]) {
-    FILE *file; // File pointer for batch mode
+void wCat(int argc, char** argv);
+void wCd(int argc, char** argv);
+void wExit(int argc, char** argv);
+void wPath(int argc, char** argv);
 
-    if (argc > 2) {
-        fprintf(stderr, "%s", error_message); // Print an error message if too many arguments are provided
-        exit(EXIT_FAILURE); // Exit the program with a failure status
-    } else {
-        if (argc == 2) {
-            file = fopen(argv[1], "r");
-            if (file != NULL) {
-                batchloop(file);
-            } else {
-                fprintf(stderr, "%s", error_message);
-                exit(EXIT_FAILURE);
-            }
-        } else if (argc == 1)
-            userloop();
-    }
+int main(int argc, char* argv[]) {
+  FILE* file = stdin; 
+  // set path to current working directory
 
-    return 0;
-}
-
-void userloop() {
-    char *line = NULL;
-    size_t len = 0;
-    ssize_t nread;
-
-    while (1)
-    {
-        printf("wish> ");
-        nread = getline(&line, &len, stdin);
-        if (nread == -1)
-        {
-            exit(0);
-        }
-        else
-        {
-            wishExecute(tokenize(line, " \t\n"));
-        }
-    }
-    free(line);
-}
-
-void batchloop(FILE *file) {
-    char *line = NULL;
-    size_t len = 0;
-    ssize_t nread;
-    int count = 0;
-    nread = getline(&line, &len, file);
-
-    if (nread != -1)
-    {
-        do
-        {
-            if (strcmp(line, "exit") == 0 || strcmp(line, "exit\n") == 0)
-            {
-                exit(0);
-            }
-
-            wishExecute(tokenize(line, " \t\n"));
-            count++;
-
-            nread = getline(&line, &len, file);
-        } while (nread!= -1);
-    }
-
-    free(line);
+  if (argc == 1){ 
+    interactiveLoop();
     exit(0);
-}
+  } else{ // ./wish <fileName>
+    file = fopen(argv[1],"r");
 
-void parallelCommandExecute(char **args) { //passes test 16 
-    char *commands[MAX_TOKENS]; // Adjusted the array size
-    int nCommands = 0;
-    //char *command = strtok(line, "&");
-    
-    //while (command != NULL && nCommands < MAX_TOKENS) {
-       // commands[nCommands++] = command;
-       // command = strtok(NULL, "&");
-    //}
-
-    pid_t pids[MAX_TOKENS];
-    pid_t pid;
-    //int args_num = 1;
-    int argcount = 0, i= 0;
-    for(int i =0; args[i] != NULL;i++){
-        if(*args[i] == '&'){
-            args[i] = NULL;
-            if(args[i+1]!=NULL)
-                argcount++;
-        }
+    struct stat stat_record;
+    if(stat(argv[1], &stat_record)){
+      fprintf(stderr, "%s", error_message);
+      exit(1);
+    } else if(stat_record.st_size <= 1){
+      fprintf(stderr, "%s", error_message);
+      exit(1);
     }
 
-    while(args[i]!= NULL){
-        //pids[i]=fork();
-        pid = fork();
-
-        //if (pids[i] == 0) {
-        if (pid ==0){
-            // Child process
-            char *args[MAX_TOKENS];
-            //int args_num = 0;
-            char *token = strtok(commands[i], " ");
-            //while (token != NULL && args_num < MAX_TOKENS) {
-                //args[args_num++] = token;
-                //token = strtok(NULL, " ");
-            //}
-            //args[args_num] = NULL;
-            wishExecute(args+i); // Call wishExecute with the command arguments
-            // exit(0);
-        //} else if (pids[i] < 0) {
-        } else if (pid < 0) {
-            
-            //while (token != NULL && args_num < MAX_TOKENS) {
-              
-                 //args_num++;
-                //token = strtok(NULL, " ");
-            // Error handling for fork failure
-            fprintf(stderr, "%s", error_message);
-        }else{
-            while(args[i]!=NULL)
-                i++;
-            }
-            i++;
+    if (file != NULL) {
+      batchMode(file);
     }
 
-    // Parent process waits for child processes to finish
-    /*for (int i = 0; i < nCommands; i++) {
-        if (pids[i] > 0) {
-            waitpid(pids[i], NULL, 0);
-        }
-    }*/
-}
-
-int wishcd(char **args) {
-    // no path specified
-    if(args[1] == NULL){
-            fprintf(stderr, "%s", error_message);
-    }
-    else{
-        if(chdir(args[1]) != 0){
-            fprintf(stderr, "%s", error_message);
-            return 1;
-        }  
-    }
-    return 0;
-}
-
-void changeDirectory(char *path) {
-    int rc = chdir(path);
-    if (rc != 0)
-    {
-        fprintf(stderr, "%s", error_message);
-    }
-}
-
-int wishexit(char **args) {
-    int i = 1;
-    while (args[i] != NULL) {
-        fprintf(stderr, "%s", error_message);
-        return 0;
-        i++;
-    }
     exit(0);
+  } 
+  
+  errorMessage();
+  exit(0); 
 }
 
+void batchMode(FILE* file) {
+  char *line = NULL; // Initialize the pointer to NULL
+  char* argv[MAXARGS];
+  int argc = -1; 
+  int parallel = -1; 
+  size_t len = 0;
+  ssize_t nread;
 
-int wishExecute(char **args) {
-    if (args[0] == NULL)
-        return 1;
+  while ((nread = getline(&line, &len, file)) != -1) {
+    // printf("%s\n", line);
+    argc = splitLine(line, argv);
+    // printArgv(argc, argv);
 
-    // Check if the command is a built-in command
-    for (int i = 0; i < wishnumbuiltins(); i++) {
-        if (strcmp(args[0], builtinstr[i]) == 0) {
-            return (*builtinfunc[i])(args); // Execute built-in command
-        }  
-    }
+    if (argc == -1)
+      continue;
 
-    // Check for the presence of '&' symbol in the command
-    for (int i = 0; args[i] != NULL; i++) {
-        if (strcmp(args[i], "&") == 0) {
-            parallelCommandExecute(args); // Call parallelCommandExecute
-            return 0;
-        }
-    }
+    if (strcmp(argv[0], "exit") == 0) {
+      free(line);
+      wExit(argc, argv);
+      exit(0);
+    } else if (strcmp(argv[0], "cd") == 0 || strcmp(line, "cd\n") == 0) {
+      wCd(argc, argv);
+    } else if (strcmp(argv[0], "path") == 0 || strcmp(argv[0], "path\n") == 0) {
+      wPath(argc, argv);
 
-    // If '&' symbol not found, proceed with regular execution
-    if (!pathNull) {
-        return wishLaunch(args);
+      if (argc > 1)
+        onlyBuiltIn = 0; 
     } else {
-        fprintf(stderr, "%s", error_message);
-    }  
+      // Check for parallel and if parallel == 0 then empty parallel 
+      // skip processExtCmd and redirect 
+      if (argc == 0) continue; 
+
+      parallel = checkAmpersand(argc, argv);
+      if (parallel == -1) 
+        continue;
+      else 
+        parallelCommands(argc, argv);
+      // printf("%d\n", parallel);
+      
+      // if (parallel == 1) {
+      //   parallelCommands(argc, argv);
+      // }
+      // else if (parallel == 0){
+      //   redirect(argc, argv);
+      //   processExtCmd(argc, argv);
+      // }
+    }
+
+    free(line);
+
+    line = NULL;
+    len = 0;
+  }
+
+  return;
+}
+
+char* builtinCommand(char* command){
+  if (strcmp(command, "path") == 0 || strcmp(command, "cd") == 0 || strcmp(command, "exit") == 0)
+    return command;
+
+  return "not-builtIn";
+}
+
+int checkAmpersand(int argc, char** argv) {
+  int isAmp = 0;
     
-    return 0; 
-}
+  for (int i = 0; i < argc; i++) {
+    if(strcmp(argv[i], "&") == 0) {
+      if (i == 0) return -1;
 
-int wishnumbuiltins() {
-    return sizeof(builtinstr) / sizeof(char *);
-}
-
-char **tokenize(char *line, char *delim) { // passes tests 11 by splitting the string into tokens 
-    char **tokens = malloc(MAX_TOKENS * sizeof(char *));
-    char *token;
-    int index = 0;
-
-    token = strtok(line, " \r\n\t");
-    while (token != NULL)
-    {
-        // this is going to handle whitespace
-        if ((*token == '\0') || (*token == '\n') || (*token == '\t')) {
-            token = strtok(NULL, " \r\n\t");
-            continue;
-        }
-        // this is gonna split the command
-        if ((strchr(token, '>')) && (token[0] != '>')) {  
-            char *subtoken;
-            subtoken = strtok(token, ">");
-            tokens[index] = subtoken;
-            index++;
-            subtoken = ">";
-            tokens[index] = subtoken;
-            index++;
-            subtoken = strtok(NULL, ">");
-            tokens[index] = subtoken;
-            index++; 
-        } else if ((strchr(token, '&')) && (token[0] != '&')) { 
-            // will split the command from valid 
-            char *subtoken;
-            while ((subtoken = strtok(token, "&"))) {
-                tokens[index] = subtoken;
-                index++;
-                subtoken = "&";
-                tokens[index] = subtoken;
-                index++;
-                token = strtok(NULL, "&");
-            }
-            tokens[index - 1] = NULL;
-            index--;
-        }  else if ((strchr(token, '\"'))) { 
-            char *quoteToken = malloc(1024 * sizeof(char*));
-            quoteToken = strtok(token, "\"");
-            if(strchr(token, '\"')){
-                quoteToken = strtok(NULL, "\"");
-            }else{
-                quoteToken = strtok(NULL, "\"");
-                token = strtok(NULL, "\"");
-                strcat(quoteToken, " ");
-                strcat(quoteToken, token);
-            }
-            // remove any new line character at the end
-            strtok(quoteToken, "\n");
-            // add the full quote token to the tokens for args
-            tokens[index] = quoteToken;
-            index++;
-        } else {
-            tokens[index] = token;
-            index++;
-        }
-        token = strtok(NULL, " \r\n\t");
+      isAmp = 1;
     }
-    // this will end the array with a null
-    tokens[index] = NULL;
-    return tokens;
+  }
+  return isAmp;
 }
 
-int wishPath(char **args) {
-    if (args[1] == NULL)
-    {
-        pathNull = 1; // non built ins are working 
-        return 0;
-    }
-    for (int i = 1; args[i] != NULL; i++)
-    {
-        if (args[i] != NULL)
-        {
-            char *tmp = (char *)malloc(200 * sizeof(char));
-            getcwd(tmp, 200);
-            if (!access(args[i], X_OK))
-            {
-            
-                // add the current working directory so it's an absolute path
-                path[paths] = concatPath(tmp, args[i]);
-                paths++;
-                // a path has been specified.
-                pathNull = 0;
-            }
-        }
-    }
+int checkPath(char* enteredPath) {
+  for (int i = 0; i < pathLocation; i++) {
+    if (strcmp(shellPath[i], enteredPath) == 0) return i;
+  }
 
-    return 0;
+  return -1; 
 }
 
-int wishLaunch(char **args) {
-    int i = 0;
-    pid_t pid;
-    
-    //while (args[i] != NULL) {
-        pid = fork();
-        processIDs[processCount] = pid;
-        processCount++;
-        
-        if (pid == 0) {
-            // Child process
-            if (validateArgs(args)) {
-                fprintf(stderr, "%s", error_message);
-                exit(EXIT_FAILURE);
-            } else {
-                //printf("\targ[0]: %s\n",args[0]);
-                char *cmdpath = getPath(args[i]);
-                if (*cmdpath != '\0') {
-                    execv(cmdpath, args); //not a built in when you use exec 
-                } else {
-                    fprintf(stderr, "%s", error_message);
-                    exit(EXIT_FAILURE);
-                }
-            }
-        } else if (pid < 0) {
-            fprintf(stderr, "%s", error_message);
-        }
-        
-        i++;
-    //}
-    
-    return pid;
-}
-
-
-char *concatPath(const char *path1, const char *path2) {
-    size_t len1 = strlen(path1);
-    size_t len2 = strlen(path2);
-
-    // Allocate memory for the concatenated path
-    char *result = malloc(len1 + len2 + 2); // Plus 2 for '/' and '\0'
-    if (result == NULL) {
-        perror("malloc");
-        exit(EXIT_FAILURE);
-    }
-
-    // Copy path1 and path2 into the result buffer
-    strcpy(result, path1);
-    strcat(result, "/");
-    strcat(result, path2);
-
-    return result;
-}
-
-void printcwd() {
-    char *buf = (char *)malloc(100 * sizeof(char));
-    int print = 1; // Set to 1 to ensure the loop runs at least once
-
-    while (print) {
-        getcwd(buf, 100);
-        printf("cwd is: %s \n", buf);
-
-        // Change the condition that terminates the loop
-        // For example, press Ctrl+C or provide another condition to break the loop
-        // Here, the loop will only execute once, but you can modify it according to your requirements
-        print = 0; // Change this condition accordingly
-    }
-
-    free(buf);
-}
-
-char* getPath(char *s1) {
-    char *s2;
-    char *result = malloc(100 * sizeof(char));
-    int i = 0;
-    //printf("paths: %d\n", paths);
-    while (i < paths) {
-        s2 = path[i];
-        result = concatPath(s2, s1);
-        if (!access(result, X_OK)) {
-            return result;
-        }
-        i++;
-    }
-    // Corrected to use getcwd instead of printcwd
-    s2=(char *)malloc(100*sizeof(char));
-    getcwd(s2,100);
-    result = concatPath(s2, s1);
-    if (!access(result, X_OK)) {
+char* concatStr(char* str1, char* str2) {
+    char *result;
+    if(str1 == NULL ){
+        result  = malloc(strlen(str2) + 1); 
+        strcpy(result, str2);
+        return result;
+    }else if (str2 ==NULL){
+        result  = malloc(strlen(str1) + 1); 
+        strcpy(result, str1);
         return result;
     }
-    result[0] = '\0'; // Setting the first character to null terminator
+    result  = malloc(strlen(str1) + strlen(str2) + 1); 
+    
+    // in real code you would check for errors in malloc here
+    strcpy(result, str1);
+    strcat(result, str2);
     return result;
 }
 
-int validateArgs(char **args) {
-    int redirectCount = 0, pipeCount = 0, i, fout;
+void emptyArr(char** arr){
+  for (int i = 0; i < MAXARGS; ++i) {
+    arr[i] = NULL;
+  }
+}
 
-    for (i = 0; args[i] != NULL; i++) {
-        switch (*args[i]) {
-            case '>':
-                if (!i) {
-                    // First arg is '>', which is an error
-                    return 1;
-                }
-                if (args[i + 1] == NULL || args[i + 2] != NULL) {
-                    // Nothing after redirect or too many things
-                    // after redirect, so error
-                    return 1;
-                }
-                redirectCount++;
-                break;
-            case '|':
-                // Increment pipe count if '|' found
-                pipeCount++;
-                break;
-        }
+void errorMessage(){
+  char error_message[30] = "An error has occurred\n";
+  fprintf(stderr, "%s", error_message);
+  exit(0);
+}
+
+void interactiveLoop(){}
+
+// New func from KF
+int newParallelProcessExtCmd(int argc, char **argv){
+  pid_t pid;
+
+  pid = fork();
+
+  switch(pid){
+    case -1:
+      errorMessage();
+    case 0:
+      /* I am child process.
+       I will execute the command, call: execvp */
+
+       
+       // redirect has to happen in child, not in parent
+      redirect(argc, argv);
+      runExtCmd(argc, argv);
+      break;
+    }
+    
+
+  return pid;
+}
+
+void parallelExtCmd(char* allCommands[][MAXARGS], int* commandLength, int commandNums) {
+    pid_t childPids[commandNums];
+    pid_t pid;
+
+    for (int i = 0; i < commandNums; i++) {
+        // have to get child's pid for waiting stuff KF
+        pid = newParallelProcessExtCmd(commandLength[i], allCommands[i]);
+        childPids[i] = pid;
     }
 
-    if (redirectCount > 1) {
-        // Too many redirects in single command, so error
-        return 1;
-    } else if (redirectCount == 1) {
-        // Redirect to file instead of stdout
-        fout = creat(args[i - 1], 0644); // Create or truncate file with read/write permissions
-        if (fout < 0) {
-            perror("creat"); // Print error if creat fails
-            return 1;
+    // Wait for all child processes to finish
+    for (int i = 0; i < commandNums; i++) {
+        if (childPids[i] > 0) {
+            waitpid(childPids[i], NULL, 0);
         }
-        // Redirect stdout to the file
-        if (dup2(fout, STDOUT_FILENO) < 0) {
-            perror("dup2"); // Print error if dup2 fails
-            return 1;
-        }
-        close(fout); 
-        args[i - 1] = NULL;
-        args[i - 2] = NULL;
     }
-    return 0;
+}
+
+void parallelCommands(int argc, char** argv) {
+    char* allCommands[MAXARGS][MAXARGS]; // Array to hold all commands and their arguments
+    char* command[MAXARGS]; // Array to hold a single command
+    int commandLength[MAXARGS]; // Array to hold the length of each command
+    int commandArgs = 0;
+    int totalCommands = 0;
+
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "&") == 0) {
+            command[commandArgs] = NULL;
+            allCommands[totalCommands][0] = NULL; // Ensure the next command starts with NULL terminator
+            memcpy(allCommands[totalCommands], command, (commandArgs + 1) * sizeof(char*));
+            commandLength[totalCommands] = commandArgs;
+            totalCommands++;
+            commandArgs = 0;
+            continue;
+        }
+        command[commandArgs++] = argv[i];
+    }
+
+    if (commandArgs > 0) {
+        command[commandArgs] = NULL;
+        allCommands[totalCommands][0] = NULL; // Ensure the last command starts with NULL terminator
+        memcpy(allCommands[totalCommands], command, (commandArgs + 1) * sizeof(char*));
+        commandLength[totalCommands] = commandArgs;
+        totalCommands++;
+    }
+
+    parallelExtCmd(allCommands, commandLength, totalCommands);
+}
+
+void printArgv(int argc, char** argv) {
+  printf("\nArgc: %d\n", argc);
+  for (int i = 0; i < argc; i++) {
+    printf("%s, ", argv[i]);
+  }
+
+  printf("\n");
+}
+
+void printPaths() {
+  for (int i = 0; shellPath[i] != NULL; i++) {
+    printf("%s, ", shellPath[i]);
+  }
+
+  printf("\n");
+}
+
+void processExtCmd(int argc, char **argv){
+  int status;
+  pid_t pid;
+
+  pid = fork();
+
+  switch(pid){
+    case -1:
+      errorMessage();
+    case 0:
+      /* I am child process.
+       I will execute the command, call: execvp */
+      runExtCmd(argc, argv);
+      break;
+
+    default:
+      /* I am parent process */
+      if (wait(&status) == -1){
+        errorMessage();
+      } else {
+        // printf("Child returned status: %d\n\n", status);
+      }
+
+      break;
+    }  /* end of the switch */
+
+  return;
+}  
+
+
+void redirect(int argc, char** argv){
+  int i;	     // loop counter
+  int out = 0;  // track position of location Out redirection, >
+  int fd;
+
+  for (i = 0; i < argc; i++) {
+    if (strcmp(argv[i], ">") == 0) {
+      if (out != 0) {
+        // User entered "ls > lsout > file1" 
+        errorMessage(); 
+      } else if (i == 0) {
+        // User entered "> lsout"
+        errorMessage();
+      } 
+
+      // User entered ls file1 > file2
+      // set out to the current loop_counter
+      out = i;     
+    } 
+  }
+
+  // printArgv(argc, argv);
+  // printf("%d out\n", out);
+  if (out != 0) {
+    if (argv[out + 1] == NULL || argv[out + 2] != NULL){
+      // User entered "ls > NULL" or ls > file file
+      errorMessage();
+    }
+    // printf("Here Out is : %d\n", out);
+        
+    // Open the file using name from argv (create file if needed)
+    fd = open(argv[out + 1], O_RDWR | O_TRUNC | O_CREAT, S_IRUSR | S_IWUSR);
+    // printf("%d:: fd", fd);
+        
+    // Error check the open
+    if (fd == -1) {
+      errorMessage();
+    }
+
+    // // Switch standard-out to the value of file descriptor 
+
+    // printf("%d:: fd", fd);
+
+    dup2(fd, STDOUT_FILENO);
+    close(fd);
+        
+    argv[out] = NULL;
+  }    
+} 
+
+void runExtCmd(int argc, char** argv) {
+  int ret;
+  char *cmd_path;
+
+  // we check all path and concatStr(path[i],argv[0])
+  for (int i = 0; shellPath[i] != NULL ; i++) {
+    // printf("shellPath: %s\n", shellPath[i]);
+
+    cmd_path = shellPath[i];
+    cmd_path = concatStr(cmd_path, "/");
+    cmd_path = concatStr(cmd_path, argv[0]);
+    // printf("shellPath: %s\n", shellPath[i]);
+
+    // printPaths();
+
+    if (access(cmd_path, X_OK) == 0 && onlyBuiltIn == 0) {
+      ret = execv(cmd_path, argv);
+      
+      if (ret == -1)
+        errorMessage();
+    } else if (onlyBuiltIn == -1) {
+      errorMessage();
+    }
+  }
+
+  errorMessage();
+  return;
+}
+
+int splitLine(char *line, char** argv ){
+    int argc = 0;
+    char *separator = " \n\t";
+    char *token;
+    char *subtoken;
+    
+    while ((token = strsep(&line, separator)) != NULL && (argc + 1 < MAXARGS)) {
+      // Variable whitespace & Empty Commands
+      if((*token == '\0') || (*token == '\n') || (*token == '\t')) {
+        continue;
+      }
+      
+      // printf("token: %s\n", token);
+
+      if ((strchr(token, '>')) != NULL && (token[0] != '>')) {
+        // found > within the token. Now break it up into parts
+        subtoken = strsep(&token, ">");
+        argv[argc++] = subtoken;
+        argv[argc++] = concatStr(">", NULL);
+        subtoken = strsep(&token, ">");
+        argv[argc++] = subtoken;
+      } else if ((strchr(token, '&')) != NULL && (token[0] != '&')) {
+        while((subtoken = strsep(&token, "&"))){
+          argv[argc++] = subtoken;
+          subtoken = concatStr("&", NULL);
+          argv[argc++] = subtoken;
+        }
+      } else {
+        argv[argc++] = token;
+      }
+    }
+
+    if (argc > 0)
+      argv[argc] = NULL;
+    
+    // printArgv(argc, argv);
+
+    return argc;
+}
+void wCat(int argc, char** argv) {
+  FILE* in = stdin;
+  char line[512];
+
+  // just ./wcat entered then return 0
+  if (argc == 1) {}
+
+  for (int i = 1; i < argc; i++) {
+    // output if not found (wcat: cannot open file)
+    in = fopen(argv[i],"r");
+
+    if (in == NULL) {}
+
+    while (fgets(line, sizeof(line), in) != NULL) {
+      printf("%s", line);
+    }
+  }
+
+  fclose(in);
+}
+
+void wCd(int argc, char** argv) {
+  char* dir = NULL;
+  int ret = 0; 
+
+  if (argc == 1 || argc > 2) {
+    errorMessage();
+  }
+  
+  dir = argv[1];
+
+  if (access(dir, X_OK) == 0)
+    ret = chdir(dir);
+
+  else
+    errorMessage();
+
+  if (ret != 0) {
+    errorMessage();
+  }
+
+  return;
+}
+
+void wExit(int argc, char** argv) {
+  if (argc > 1) {
+    errorMessage();
+  }
+
+  exit(0);
+}
+
+
+void wPath(int argc, char** argv) {
+  // int isPath = 0;
+  if (argc == 1) {
+    onlyBuiltIn = -1;
+    return;
+  } else {
+    for (int i = 1; i < argc; i++) {
+      if (argv[i] != NULL) {
+        char *currentPath = (char *)malloc(200*sizeof(char));
+        // isPath = checkPath(argv[i]);
+
+        // if (isPath > 0) return; 
+
+        getcwd(currentPath,200);
+        strcat(currentPath, "/");
+        strcat(currentPath, argv[i]);
+
+        // printf("Current Path to be added: %s\n", currentPath);
+        if (access(currentPath, X_OK) == 0) {
+          shellPath[pathLocation] = currentPath;
+          // printf("added: %s\n", shellPath[pathLocation]);
+          pathLocation++;   
+        } 
+      }
+    }
+  }
+
+  // printPaths();
 }
