@@ -23,22 +23,20 @@ int onlyBuiltIn = 0;
 
 // Batch mode require file input
 void batchMode(FILE* fileName);
-char* builtinCommand(char *command);
 int checkAmpersand(int argc, char** argv);
-int checkPath(char* currentPath);
 char* concatStr(char *str1, char *str2);
 void emptyArr(char** arr);
 void errorMessage();
 void interactiveLoop();
+int newParallelProcessExtCmd(int argc, char **argv);
 void parallelCommands(int argc, char** argv);
+void parallelExtCmd(char* allCommands[][MAXARGS], int* commandLength, int commandNums);
 void printArgv(int argc, char **argv);
 void printPaths();
 void processExtCmd(int argc, char **argv);
 void redirect(int argc, char*argv[]);
 void runExtCmd(int argc, char** argv);
 int splitLine(char* line, char** argv);
-
-void parallelExtCmd(char* allCommands[][MAXARGS], int* commandLength, int commandNums);
 
 void wCat(int argc, char** argv);
 void wCd(int argc, char** argv);
@@ -110,9 +108,9 @@ void batchMode(FILE* file) {
 
       parallel = checkAmpersand(argc, argv);
   
-      if (parallel == -1) 
+      if (parallel == -1) // single ampersand
         continue;
-      else 
+      else  // every command goes through parallelCommnads
         parallelCommands(argc, argv);
     }
 
@@ -125,13 +123,7 @@ void batchMode(FILE* file) {
   return;
 }
 
-char* builtinCommand(char* command){
-  if (strcmp(command, "path") == 0 || strcmp(command, "cd") == 0 || strcmp(command, "exit") == 0)
-    return command;
-
-  return "not-builtIn";
-}
-
+// Checks if 
 int checkAmpersand(int argc, char** argv) {
   int isAmp = 0;
     
@@ -144,14 +136,6 @@ int checkAmpersand(int argc, char** argv) {
   }
 
   return isAmp;
-}
-
-int checkPath(char* enteredPath) {
-  for (int i = 0; i < pathLocation; i++) {
-    if (strcmp(shellPath[i], enteredPath) == 0) return i;
-  }
-
-  return -1; 
 }
 
 char* concatStr(char* str1, char* str2) {
@@ -349,8 +333,6 @@ void processExtCmd(int argc, char **argv){
       /* I am parent process */
       if (wait(&status) == -1){
         errorMessage();
-      } else {
-        // printf("Child returned status: %d\n\n", status);
       }
 
       break;
@@ -536,12 +518,16 @@ void wHistory(int historyCount, char** history, int argc, char** argv) {
         printf("%d %s", historyVal, history[historyVal - 1]);
     } else {
         // Handle error: character is not a digit
-        errorMessage();
+        char error_message[30] = "An error has occurred\n";
+        fprintf(stderr, "%s", error_message);
+        return;
     }
   } else {
-    errorMessage();
+    char error_message[30] = "An error has occurred\n";
+    fprintf(stderr, "%s", error_message);
+    return;
   }
-  return;
+
 }
 
 void wPath(int argc, char** argv) {
@@ -553,9 +539,6 @@ void wPath(int argc, char** argv) {
     for (int i = 1; i < argc; i++) {
       if (argv[i] != NULL) {
         char *currentPath = (char *)malloc(200*sizeof(char));
-        // isPath = checkPath(argv[i]);
-
-        // if (isPath > 0) return; 
 
         getcwd(currentPath,200);
         strcat(currentPath, "/");
@@ -573,6 +556,3 @@ void wPath(int argc, char** argv) {
 
   // printPaths();
 }
-
-// tests 22 checks if everything works serially
-// Problem
