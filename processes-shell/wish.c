@@ -38,9 +38,12 @@ void redirect(int argc, char*argv[]);
 void runExtCmd(int argc, char** argv);
 int splitLine(char* line, char** argv);
 
+void parallelExtCmd(char* allCommands[][MAXARGS], int* commandLength, int commandNums);
+
 void wCat(int argc, char** argv);
 void wCd(int argc, char** argv);
 void wExit(int argc, char** argv);
+void wHistory(int historyCount, char** history, int argc, char** argv);
 void wPath(int argc, char** argv);
 
 int main(int argc, char* argv[]) {
@@ -107,10 +110,10 @@ void batchMode(FILE* file) {
 
       parallel = checkAmpersand(argc, argv);
       
-      if (parallel == 1)
+      if (parallel == 1) {
         parallelCommands(argc, argv);
-      
-      if (parallel == 0) {
+      }
+      else if (parallel == 0) {
         redirect(argc, argv);
         processExtCmd(argc, argv);
       }
@@ -185,37 +188,116 @@ void errorMessage(){
   exit(0);
 }
 
-void interactiveLoop(){}
+void interactiveLoop() {
+    char *line = NULL;
+    char *argv[MAXARGS];
+    char *history[100];
+    int historyCount = 0;
+    int argc = -1;
+    int parallel = -1;
+    size_t len = 0;
 
-void parallelCommands(int argc, char** argv) {
-  char* command[MAXARGS];
-  int commandArgs = 0; 
+    while (1) {
+        printf("wish> "); // Prompt for user input
+        fflush(stdout); // Ensure the prompt is displayed
 
-  for (int i = 0; i < argc; i++) {
-    if(strcmp(argv[i], "&") == 0) {
+        if (getline(&line, &len, stdin) == -1) {
+            // Handle end-of-file or error
+            printf("\n");
+            break;
+        }
 
-      // printArgv(commandArgs, command);
-      command[commandArgs] = NULL;
-      redirect(commandArgs, command);
-      processExtCmd(commandArgs, command);
+        history[historyCount++] = strdup(line);
 
-      emptyArr(command);
-      commandArgs = 0;
+        argc = splitLine(line, argv);
+        if (argc == -1)
+            continue;
 
-      continue;
+        if (strcmp(argv[0], "exit") == 0) {
+            wExit(argc, argv);
+        } else if (strcmp(argv[0], "history") == 0) {
+          wHistory(historyCount, history, argc, argv);
+        } else if (strcmp(argv[0], "cat:cat") == 0) {
+          wCat(argc, argv);
+        } else if (strcmp(argv[0], "cd") == 0 || strcmp(line, "cd\n") == 0) {
+            wCd(argc, argv);
+        } else if (strcmp(argv[0], "path") == 0 || strcmp(argv[0], "path\n") == 0) {
+            wPath(argc, argv);
+            if (argc > 1)
+                onlyBuiltIn = 0;
+        } else {
+            if (argc == 0)
+                continue;
+
+            parallel = checkAmpersand(argc, argv);
+
+            if (parallel == 1) {
+                parallelCommands(argc, argv);
+            } else if (parallel == 0) {
+                redirect(argc, argv);
+                processExtCmd(argc, argv);
+            }
+        }
     }
 
-    command[commandArgs++] = argv[i];
-    // printf("commandArgs: %d, command: %s\n",commandArgs ,command[commandArgs - 1]);
-  }
+    free(line);
+}
 
-  if (commandArgs > 0) {
-    command[commandArgs] = NULL;
-    redirect(commandArgs, command);
-    processExtCmd(commandArgs, command);
-  }
+void parallelExtCmd(char* allCommands[][MAXARGS], int* commandLength, int commandNums) {
+    pid_t childPids[commandNums];
+    for (int i = 0; i < commandNums; i++) {
+        pid_t pid = fork();
+        childPids[i] = pid;
 
-  return; 
+        if (pid < -1) {
+            errorMessage();
+        } else if (pid == 0) {
+            // Child process
+            redirect(commandLength[i], allCommands[i]);
+            runExtCmd(commandLength[i], allCommands[i]);
+            exit(0);
+        } 
+    }
+
+    // Wait for all child processes to finish
+    for (int i = 0; i < commandNums; i++) {
+        if (childPids[i] > 0) {
+            waitpid(childPids[i], NULL, 0);
+        }
+    }
+
+    return; 
+}
+
+
+void parallelCommands(int argc, char** argv) {
+    char* allCommands[MAXARGS][MAXARGS]; // Array to hold all commands and their arguments
+    char* command[MAXARGS]; // Array to hold a single command
+    int commandLength[MAXARGS]; // Array to hold the length of each command
+    int commandArgs = 0;
+    int totalCommands = 0;
+
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "&") == 0) {
+            command[commandArgs] = NULL;
+            memcpy(allCommands[totalCommands], command, (commandArgs + 1) * sizeof(char*));
+            commandLength[totalCommands] = commandArgs;
+            totalCommands++;
+            commandArgs = 0;
+            continue;
+        }
+
+        command[commandArgs++] = argv[i];
+    }
+
+    if (commandArgs > 0) {
+        command[commandArgs] = NULL;
+        memcpy(allCommands[totalCommands], command, (commandArgs + 1) * sizeof(char*));
+        commandLength[totalCommands] = commandArgs;
+        totalCommands++;
+    }
+
+    parallelExtCmd(allCommands, commandLength, totalCommands);
 }
 
 void printArgv(int argc, char** argv) {
@@ -299,8 +381,9 @@ void redirect(int argc, char** argv){
       errorMessage();
     }
 
-    // // Switch standard-out to the value of file descriptor 
+    // // // Switch standard-out to the value of file descriptor 
     // dup2(fd, STDOUT_FILENO);
+
     // close(fd);
         
     argv[out] = NULL;
@@ -380,7 +463,7 @@ void wCat(int argc, char** argv) {
   char line[512];
 
   // just ./wcat entered then return 0
-  if (argc == 1) {}
+  if (argc == 1) {return;}
 
   for (int i = 1; i < argc; i++) {
     // output if not found (wcat: cannot open file)
@@ -421,10 +504,32 @@ void wCd(int argc, char** argv) {
 
 void wExit(int argc, char** argv) {
   if (argc > 1) {
-    errorMessage();
+    char error_message[30] = "An error has occurred\n";
+    fprintf(stderr, "%s", error_message);
+    return;
   }
 
   exit(0);
+}
+
+void wHistory(int historyCount, char** history, int argc, char** argv) {
+  if (argc == 1) {
+    for (int i = 0; i < historyCount; i++) {
+      printf("%d %s", i + 1, history[i]);
+    }
+  } else if (argc == 2){
+    char historyNum = argv[1][1]; 
+    if (historyNum >= '0' && historyNum <= '9') {
+        int historyVal =  historyNum - '0';
+        printf("%d %s", historyVal, history[historyVal - 1]);
+    } else {
+        // Handle error: character is not a digit
+        errorMessage();
+    }
+  } else {
+    errorMessage();
+  }
+  return;
 }
 
 void wPath(int argc, char** argv) {
@@ -458,4 +563,4 @@ void wPath(int argc, char** argv) {
 }
 
 // tests 22 checks if everything works serially
-// Problem?
+// Problem
